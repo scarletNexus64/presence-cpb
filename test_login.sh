@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script de test rapide pour vérifier la connexion
-BASE_URL="http://admin1.cpb-douala.com"
+BASE_URL="http://192.168.1.119:8001"
 
 echo "🔍 Test de connexion au système de présence CPB"
 echo "=============================================="

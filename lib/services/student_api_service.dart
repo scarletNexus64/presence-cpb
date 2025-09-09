@@ -346,10 +346,20 @@ class StudentApiService {
         'attendance_date': finalDate,
         'students': students
             .map(
-              (student) => {
-                'student_id': student['id'],
-                'is_present': student['attendance_status'] == 'present',
-                'student_number': student['student_number'],
+              (student) {
+                Map<String, dynamic> studentData = {
+                  'student_id': student['id'],
+                  'is_present': student['attendance_status'] == 'present',
+                  'student_number': student['student_number'],
+                  'attendance_status': student['attendance_status'],
+                };
+                
+                // Ajouter l'heure de retard si l'étudiant est en retard
+                if (student['attendance_status'] == 'late' && student['late_time'] != null) {
+                  studentData['late_time'] = student['late_time'];
+                }
+                
+                return studentData;
               },
             )
             .toList(),
@@ -406,6 +416,88 @@ class StudentApiService {
       print('🔴 Erreur: $e');
 
       return ApiResponse(success: false, message: 'Erreur de connexion: $e');
+    }
+  }
+
+  /// Récupérer les étudiants d'une série avec leurs présences actuelles pour l'édition
+  Future<ApiResponse> getStudentsWithAttendance(
+    int seriesId,
+    String date,
+    String mode,
+  ) async {
+    try {
+      print('');
+      print('✏️ ========== RÉCUPÉRATION POUR ÉDITION ==========');
+      print('📅 Date: $date');
+      print('🔄 Mode: $mode');
+      print('📊 Série ID: $seriesId');
+
+      final url = '$baseUrl/api/students/series/$seriesId/attendance';
+      final queryParams = {
+        'date': date,
+        'mode': mode,
+        'include_attendance': 'true',
+      };
+
+      final uri = Uri.parse(url).replace(queryParameters: queryParams);
+      print('🔗 URL complète: $uri');
+
+      final response = await http.get(uri, headers: await _headers);
+
+      print('');
+      print('📊 ========== RÉPONSE SERVEUR ==========');
+      print('🎯 Status: ${response.statusCode}');
+      print('📏 Taille: ${response.body.length} caractères');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('✅ Données reçues avec présences existantes');
+        
+        if (data['data'] != null) {
+          final students = data['data'] as List;
+          print('👥 Étudiants avec présences: ${students.length}');
+          
+          // Log des présences existantes
+          for (var student in students) {
+            final status = student['attendance_status'];
+            final lateTime = student['late_time'];
+            print('  👨‍🎓 ${student['first_name']} ${student['last_name']}: $status${lateTime != null ? ' (à ${_formatTimeFromIso(lateTime)})' : ''}');
+          }
+        }
+
+        return ApiResponse(
+          success: true,
+          data: data['data'] ?? [],
+          message: 'Données chargées pour édition',
+        );
+      } else {
+        print('❌ Erreur HTTP: ${response.statusCode}');
+        print('📜 Corps: ${response.body}');
+        
+        final errorData = json.decode(response.body);
+        return ApiResponse(
+          success: false,
+          message: errorData['message'] ?? 'Erreur lors du chargement',
+        );
+      }
+    } catch (e) {
+      print('');
+      print('💫 ========== ERREUR ==========');
+      print('🔴 Exception: $e');
+      return ApiResponse(
+        success: false,
+        message: 'Erreur de connexion: $e',
+      );
+    }
+  }
+
+  /// Formater l'heure depuis une chaîne ISO pour les logs
+  String _formatTimeFromIso(String isoString) {
+    try {
+      final dateTime = DateTime.parse(isoString);
+      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return isoString;
     }
   }
 

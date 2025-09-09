@@ -15,7 +15,7 @@ class AttendanceApiService {
   AttendanceApiService._internal() {
     _dio = Dio(
       BaseOptions(
-        baseUrl: dotenv.env['API_BASE_URL'] ?? 'http://admin1.cpb-douala.com',
+        baseUrl: dotenv.env['API_BASE_URL'] ?? 'http://192.168.1.119:8001',
         connectTimeout: Duration(
           milliseconds: int.parse(dotenv.env['API_TIMEOUT'] ?? '30000'),
         ),

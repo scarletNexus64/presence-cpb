@@ -1,6 +1,17 @@
 import 'package:flutter/material.dart';
 import '../../services/student_api_service.dart';
 
+/// Fonction helper pour formater l'heure depuis une chaîne ISO
+String _formatTimeHelper(String? isoTimeString) {
+  if (isoTimeString == null) return '';
+  try {
+    final dateTime = DateTime.parse(isoTimeString);
+    return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+  } catch (e) {
+    return '';
+  }
+}
+
 class AttendanceScreen extends StatefulWidget {
   final int seriesId;
   final String seriesName;
@@ -10,6 +21,7 @@ class AttendanceScreen extends StatefulWidget {
   final List<dynamic> students;
   final String mode; // 'entry' ou 'exit'
   final DateTime? selectedDate;
+  final bool isEditMode; // Mode édition
 
   const AttendanceScreen({
     super.key,
@@ -21,6 +33,7 @@ class AttendanceScreen extends StatefulWidget {
     required this.students,
     required this.mode,
     this.selectedDate,
+    this.isEditMode = false,
   });
 
   @override
@@ -43,12 +56,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       attendanceData.where((s) => s['attendance_status'] == 'present').length;
   int get absentCount =>
       attendanceData.where((s) => s['attendance_status'] == 'absent').length;
+  int get lateCount =>
+      attendanceData.where((s) => s['attendance_status'] == 'late').length;
   int get notMarkedCount =>
       attendanceData.where((s) => s['attendance_status'] == null).length;
 
   double get completionPercentage {
     if (totalStudents == 0) return 0.0;
-    return ((presentCount + absentCount) / totalStudents) * 100;
+    return ((presentCount + absentCount + lateCount) / totalStudents) * 100;
   }
 
   String get modeTitle => widget.mode == 'entry' ? 'Entrée' : 'Sortie';
@@ -59,6 +74,16 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   String get currentDate =>
       widget.selectedDate?.toIso8601String().split('T')[0] ??
       DateTime.now().toIso8601String().split('T')[0];
+
+  String _formatTime(String? isoTimeString) {
+    if (isoTimeString == null) return '';
+    try {
+      final dateTime = DateTime.parse(isoTimeString);
+      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return '';
+    }
+  }
 
   Future<void> _markAllAbsent() async {
     final shouldContinue = await _showMarkAllAbsentDialog();
@@ -141,6 +166,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       print('👥 Total élèves: $totalStudents');
       print('✅ Présents: $presentCount');
       print('❌ Absents: $absentCount');
+      print('⏰ En retard: $lateCount');
       print('⚪ Non marqués: $notMarkedCount');
 
       final response = await _apiService.submitBulkAttendance(
@@ -164,6 +190,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             );
             print('   ✅ Présents: ${data['present_count'] ?? presentCount}');
             print('   ❌ Absents: ${data['absent_count'] ?? absentCount}');
+            print('   ⏰ En retard: ${data['late_count'] ?? lateCount}');
             print(
               '   📅 Date: ${data['attendance_date'] ?? DateTime.now().toIso8601String().split('T')[0]}',
             );
@@ -171,7 +198,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
           // Message de succès plus détaillé
           final successMessage = response.data != null
-              ? '✅ Appel d\'${modeTitle.toLowerCase()} validé!\n📊 ${response.data['present_count'] ?? presentCount} présents • ${response.data['absent_count'] ?? absentCount} absents'
+              ? '✅ Appel d\'${modeTitle.toLowerCase()} validé!\n📊 ${response.data['present_count'] ?? presentCount} présents • ${response.data['absent_count'] ?? absentCount} absents • ${response.data['late_count'] ?? lateCount} en retard'
               : response.message ??
                     'Présences d\'${modeTitle.toLowerCase()} enregistrées avec succès !';
 
@@ -365,6 +392,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         color: Colors.red,
                       ),
                       _StatChip(
+                        label: 'Retards',
+                        value: lateCount.toString(),
+                        color: Colors.orange,
+                      ),
+                      _StatChip(
                         label: 'Total',
                         value: totalStudents.toString(),
                         color: Colors.blue,
@@ -427,7 +459,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Appel d\'$modeTitle',
+              widget.isEditMode 
+                  ? 'Modifier l\'appel d\'$modeTitle'
+                  : 'Appel d\'$modeTitle',
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             Text(
@@ -559,9 +593,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: _StatCard(
+                            title: 'Retards',
+                            value: lateCount.toString(),
+                            color: Colors.orange,
+                            icon: Icons.access_time,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _StatCard(
                             title: 'À faire',
                             value: notMarkedCount.toString(),
-                            color: Colors.orange,
+                            color: Colors.grey,
                             icon: Icons.schedule,
                           ),
                         ),
@@ -634,7 +677,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                             size: 20,
                           ),
                           label: Text(
-                            'Marquer les $notMarkedCount non-marqués comme absents',
+                            notMarkedCount > 0 ? 'Marquer les $notMarkedCount non-marqués comme absents' : 'Tous marqués',
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w500,
@@ -676,7 +719,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         label: Text(
                           isSubmitting
                               ? 'Enregistrement...'
-                              : 'Valider l\'appel d\'$modeTitle (${presentCount + absentCount}/${widget.students.length})',
+                              : widget.isEditMode
+                                  ? 'Sauvegarder les modifications (${presentCount + absentCount + lateCount}/${widget.students.length})'
+                                  : 'Valider l\'appel d\'$modeTitle (${presentCount + absentCount + lateCount}/${widget.students.length})',
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -825,6 +870,27 @@ class _StudentSummaryCard extends StatelessWidget {
                           ),
                         ),
                       ],
+                      if (status == 'late' && student['late_time'] != null) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.access_time,
+                              size: 14,
+                              color: Colors.orange[700],
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Arrivé à ${_formatTimeHelper(student['late_time'])}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.orange[700],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -851,6 +917,21 @@ class _StudentSummaryCard extends StatelessWidget {
                 onPressed: () =>
                     onStatusChanged(status == 'absent' ? null : 'absent'),
               ),
+              const SizedBox(width: 8),
+              _ActionButton(
+                label: 'R',
+                color: Colors.orange,
+                isSelected: status == 'late',
+                onPressed: () => {
+                  if (status == 'late') {
+                    onStatusChanged(null)
+                  } else {
+                    // Marquer comme en retard avec l'heure actuelle
+                    student['late_time'] = DateTime.now().toIso8601String(),
+                    onStatusChanged('late')
+                  }
+                },
+              ),
             ],
           ),
         ],
@@ -864,6 +945,8 @@ class _StudentSummaryCard extends StatelessWidget {
         return Colors.green;
       case 'absent':
         return Colors.red;
+      case 'late':
+        return Colors.orange;
       default:
         return Colors.grey[300]!;
     }
@@ -875,6 +958,8 @@ class _StudentSummaryCard extends StatelessWidget {
         return Colors.green;
       case 'absent':
         return Colors.red;
+      case 'late':
+        return Colors.orange;
       default:
         return Colors.grey[400]!;
     }

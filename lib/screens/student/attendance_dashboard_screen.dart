@@ -148,6 +148,159 @@ class _AttendanceDashboardScreenState extends State<AttendanceDashboardScreen> {
     }
   }
 
+  /// Navigue vers l'écran d'attendance pour modifier un appel déjà terminé
+  Future<void> _editAttendance(
+    Map<String, dynamic> seriesState,
+    String mode,
+  ) async {
+    try {
+      // Afficher un dialog de confirmation
+      final shouldEdit = await _showEditConfirmationDialog(seriesState, mode);
+      if (!shouldEdit) return;
+
+      // Récupérer les étudiants de la série avec leurs présences actuelles
+      final studentsResponse = await _apiService.getStudentsWithAttendance(
+        seriesState['series_id'],
+        _selectedDay?.toIso8601String().split('T')[0] ?? DateTime.now().toIso8601String().split('T')[0],
+        mode,
+      );
+
+      if (!studentsResponse.success || !mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur: ${studentsResponse.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Naviguer vers l'écran d'attendance en mode édition
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => AttendanceScreen(
+            seriesId: seriesState['series_id'],
+            seriesName: seriesState['full_name'],
+            className: seriesState['class_name'] ?? '',
+            levelName: seriesState['level_name'] ?? '',
+            sectionName: seriesState['section_name'] ?? '',
+            students: studentsResponse.data,
+            mode: mode,
+            selectedDate: _selectedDay,
+            isEditMode: true, // Mode édition
+          ),
+        ),
+      );
+
+      // Recharger les états après modification
+      if (result == true) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        _loadAttendanceStates();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '✅ Appel ${mode == 'entry' ? 'd\'entrée' : 'de sortie'} modifié avec succès',
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Affiche un dialog de confirmation pour l'édition
+  Future<bool> _showEditConfirmationDialog(
+    Map<String, dynamic> seriesState,
+    String mode,
+  ) async {
+    final modeLabel = mode == 'entry' ? 'd\'entrée' : 'de sortie';
+    
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.edit, color: Colors.blue[600]),
+                const SizedBox(width: 12),
+                const Text('Modifier l\'appel'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Voulez-vous modifier l\'appel $modeLabel déjà effectué pour :',
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '📋 ${seriesState['full_name']}',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue[700],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue[200]!),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: Colors.blue[700],
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Vous pourrez changer les statuts des élèves (absent → retard, présent → retard, etc.)',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Annuler'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[600],
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Modifier'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   Color _getStateColor(String state) {
     switch (state) {
       case 'not_done':
@@ -546,6 +699,7 @@ class _ClassCard extends StatelessWidget {
                     icon: Icons.login,
                     color: Colors.green,
                     onTap: onEntryTap,
+                    onEdit: null,
                     getStateColor: getStateColor,
                     getStateIcon: getStateIcon,
                   ),
@@ -562,6 +716,7 @@ class _ClassCard extends StatelessWidget {
                     icon: Icons.logout,
                     color: Colors.orange,
                     onTap: onExitTap,
+                    onEdit: null,
                     getStateColor: getStateColor,
                     getStateIcon: getStateIcon,
                   ),
@@ -582,6 +737,7 @@ class _ActionButton extends StatelessWidget {
   final IconData icon;
   final Color color;
   final VoidCallback? onTap;
+  final VoidCallback? onEdit; // Callback pour éditer l'appel
   final Color Function(String) getStateColor;
   final Icon Function(String) getStateIcon;
 
@@ -592,6 +748,7 @@ class _ActionButton extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onTap,
+    this.onEdit,
     required this.getStateColor,
     required this.getStateIcon,
   });
@@ -637,17 +794,66 @@ class _ActionButton extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                getStateIcon(state),
-                const SizedBox(width: 4),
-                Text(
-                  _getStateLabel(state, completedAt),
-                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                ),
-              ],
-            ),
+            // Afficher différemment selon l'état
+            state == 'completed'
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // État terminé
+                      Expanded(
+                        child: Column(
+                          children: [
+                            getStateIcon(state),
+                            const SizedBox(height: 2),
+                            Text(
+                              _getStateLabel(state, completedAt),
+                              style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Bouton modifier
+                      if (onEdit != null)
+                        InkWell(
+                          onTap: onEdit,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.blue[50],
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.blue[200]!),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.edit, size: 14, color: Colors.blue[700]),
+                                const SizedBox(width: 2),
+                                Text(
+                                  'Modifier',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.blue[700],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      getStateIcon(state),
+                      const SizedBox(width: 4),
+                      Text(
+                        _getStateLabel(state, completedAt),
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
           ],
         ),
       ),
